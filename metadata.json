@@ -1,0 +1,6 @@
+{
+  "name": "GCD-USMBA - Plateforme Dématérialisée du Cycle Doctoral",
+  "description": "Système 100% dématérialisé de gestion du cycle doctoral : recherche et panier de 3 sujets, capture OCR intelligente CIN/diplômes, matching académique, entretiens et signature électronique certifiée pour l'Université Sidi Mohamed Ben Abdellah de Fès.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
