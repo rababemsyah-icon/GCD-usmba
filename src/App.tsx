@@ -37,8 +37,10 @@ import {
 import { CheckCircle2, AlertTriangle, ArrowLeft, ShieldCheck } from 'lucide-react';
 import {
   applyPersistedDocumentsToApplication,
+  cleanupAndSyncPersistedApplications,
   getAllPersistedApplications,
   getAllPersistedDocuments,
+  REMOVED_TEST_APPLICATION_IDS,
   savePersistedApplication,
 } from './utils/documentPersistence';
 
@@ -173,12 +175,14 @@ export default function App() {
     []
   );
 
-  // Restore any client-persisted applications to backend on initial app load
+  // Clean up duplicate/test persisted applications once and sync the clean baseline with backend
+  const [persistenceCleaned, setPersistenceCleaned] = useState(false);
+
   useEffect(() => {
-    getAllPersistedApplications()
-      .then((persistedApps) => {
-        if (!persistedApps || persistedApps.length === 0) return;
-        const lightweightApps = persistedApps.map((app) => ({
+    cleanupAndSyncPersistedApplications(INITIAL_APPLICATIONS)
+      .then((cleanedApps) => {
+        if (!cleanedApps || cleanedApps.length === 0) return;
+        const lightweightApps = cleanedApps.map((app) => ({
           ...app,
           documents: (app.documents || []).map(({ fileDataUrl: _omit, ...rest }) => rest),
         }));
@@ -188,14 +192,15 @@ export default function App() {
           body: JSON.stringify({ applications: lightweightApps }),
         });
       })
-      .catch((err) => console.log('Persisted applications sync skipped:', err));
+      .catch((err) => console.log('Persisted applications sync skipped:', err))
+      .finally(() => setPersistenceCleaned(true));
   }, []);
 
   // Fetch applications tailored strictly to the current authenticated user (RBAC Isolation)
   // and hydrate all persisted uploaded PDF documents from IndexedDB
   const fetchApplicationsForActivePersona = useCallback(() => {
-    if (!currentUser) {
-      setApplications([]);
+    if (!currentUser || !persistenceCleaned) {
+      if (!currentUser) setApplications([]);
       return;
     }
 
@@ -238,7 +243,9 @@ export default function App() {
       getAllPersistedApplications(),
     ])
       .then(([serverData, persistedDocs, persistedApps]) => {
-        const serverApps: ApplicationBasket[] = Array.isArray(serverData) ? serverData : [];
+        const serverApps: ApplicationBasket[] = (Array.isArray(serverData) ? serverData : []).filter(
+          (a) => a && a.id && !REMOVED_TEST_APPLICATION_IDS.has(a.id)
+        );
         const statusRank = (st?: string): number => {
           switch (st) {
             case 'INSCRIT_DEFINITIF':
@@ -273,7 +280,11 @@ export default function App() {
         const mergedApps: ApplicationBasket[] = [...serverApps];
 
         for (const pApp of persistedApps) {
-          const existingIdx = mergedApps.findIndex((a) => a.id === pApp.id);
+          if (!pApp || !pApp.id || REMOVED_TEST_APPLICATION_IDS.has(pApp.id)) continue;
+          const pEmail = (pApp.candidateEmail || '').trim().toLowerCase();
+          const existingIdx = mergedApps.findIndex(
+            (a) => a.id === pApp.id || (Boolean(pEmail) && a.candidateEmail?.toLowerCase() === pEmail)
+          );
           if (existingIdx === -1) {
             if (matchesPersonaRbac(pApp, currentUser)) {
               mergedApps.unshift(pApp);
@@ -306,7 +317,7 @@ export default function App() {
         setApplications(hydratedApps);
       })
       .catch((err) => console.log('Error fetching applications:', err));
-  }, [currentUser, matchesPersonaRbac]);
+  }, [currentUser, persistenceCleaned, matchesPersonaRbac]);
 
   // Fetch simulated emails from backend
   const fetchEmails = useCallback(() => {

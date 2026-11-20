@@ -922,30 +922,56 @@ app.post('/api/basket/submit', (req: Request, res: Response) => {
     if (s) s.candidateCount += 1;
   });
 
-  applications.unshift(newApp);
+  const normalizedCandidateEmail = (newApp.candidateEmail || '').trim().toLowerCase();
+  const existingCandidateIdx = applications.findIndex(
+    (a) =>
+      (newApp.candidateId && a.candidateId === newApp.candidateId) ||
+      (normalizedCandidateEmail && a.candidateEmail?.toLowerCase() === normalizedCandidateEmail)
+  );
+
+  let savedApp = newApp;
+  if (existingCandidateIdx >= 0) {
+    const existing = applications[existingCandidateIdx];
+    const keepAdvancedStatus =
+      (STATUS_PROGRESS_RANK[existing.currentStatut] || 0) > (STATUS_PROGRESS_RANK['SOUMISE'] || 0);
+    savedApp = {
+      ...existing,
+      choices: newApp.choices,
+      assignedSubjectId: newApp.assignedSubjectId,
+      submittedAt: newApp.submittedAt,
+      currentStatut: keepAdvancedStatus ? existing.currentStatut : 'SOUMISE',
+      status: keepAdvancedStatus ? existing.status || existing.currentStatut : 'SOUMISE',
+      directeurThese: newApp.directeurThese,
+      formationDoctorale: newApp.formationDoctorale,
+      structureRecherche: newApp.structureRecherche,
+    };
+    applications[existingCandidateIdx] = savedApp;
+  } else {
+    applications.unshift(newApp);
+  }
 
   recordAuditLog(
-    newApp.candidateId,
-    newApp.candidateName,
+    savedApp.candidateId,
+    savedApp.candidateName,
     'CANDIDAT',
     'soumettreDossier()',
     'Candidature',
-    newApp.codeCandidature,
-    `Candidature soumise avec ${choices.length} choix ordonné(s). Statut: SOUMISE.`
+    savedApp.codeCandidature,
+    `Candidature soumise avec ${choices.length} choix ordonné(s). Statut: ${savedApp.currentStatut}.`
   );
 
   dispatchSimulatedEmail({
-    to: newApp.candidateEmail,
-    toName: newApp.candidateName,
-    subject: `Accusé de réception : Candidature doctorale ${newApp.codeCandidature} enregistrée`,
-    body: `Bonjour ${newApp.candidateName},\n\nVotre candidature sous le numéro ${newApp.codeCandidature} a bien été enregistrée pour l'année universitaire 2026/2027 avec ${choices.length} choix de sujet(s).\nChoix prioritaire n°1 : ${primarySubject?.title || 'Thèse Doctorale USMBA'}.\n\nService de la Scolarité Centrale USMBA.`,
+    to: savedApp.candidateEmail,
+    toName: savedApp.candidateName,
+    subject: `Accusé de réception : Candidature doctorale ${savedApp.codeCandidature} enregistrée`,
+    body: `Bonjour ${savedApp.candidateName},\n\nVotre candidature sous le numéro ${savedApp.codeCandidature} a bien été enregistrée pour l'année universitaire 2026/2027 avec ${choices.length} choix de sujet(s).\nChoix prioritaire n°1 : ${primarySubject?.title || 'Thèse Doctorale USMBA'}.\n\nService de la Scolarité Centrale USMBA.`,
     type: 'INFORMATIVE',
-    applicationId: newApp.id,
+    applicationId: savedApp.id,
   });
 
   res.status(201).json({
     message: 'Candidature soumise avec succès.',
-    application: newApp,
+    application: savedApp,
   });
 });
 
@@ -1601,6 +1627,16 @@ const STATUS_PROGRESS_RANK: Partial<Record<StatutCandidature, number>> = {
   INSCRIT_DEFINITIF: 11,
 };
 
+const REMOVED_TEST_APPLICATION_IDS = new Set<string>([
+  'app-usmba-2026-042',
+  'app-usmba-2026-033',
+  'app-usmba-2026-055',
+  'app-usmba-2026-077',
+  'app-usmba-2026-061',
+  'app-usmba-2026-092',
+  'app-usmba-2026-018',
+]);
+
 app.post('/api/applications/restore', (req: Request, res: Response) => {
   const { applications: incoming } = req.body as { applications?: ApplicationBasket[] };
   if (!Array.isArray(incoming)) {
@@ -1608,8 +1644,13 @@ app.post('/api/applications/restore', (req: Request, res: Response) => {
   }
   let restoredCount = 0;
   for (const appItem of incoming) {
-    if (!appItem || !appItem.id) continue;
-    const existingIdx = applications.findIndex((a) => a.id === appItem.id);
+    if (!appItem || !appItem.id || REMOVED_TEST_APPLICATION_IDS.has(appItem.id)) continue;
+    const incomingEmail = (appItem.candidateEmail || '').trim().toLowerCase();
+    const existingIdx = applications.findIndex(
+      (a) =>
+        a.id === appItem.id ||
+        (Boolean(incomingEmail) && a.candidateEmail?.toLowerCase() === incomingEmail)
+    );
     if (existingIdx === -1) {
       applications.unshift(appItem);
       restoredCount++;

@@ -296,6 +296,50 @@ export async function getPersistedDocumentsForCandidate(target: {
     .sort((a, b) => (a.uploadedAt || '').localeCompare(b.uploadedAt || ''));
 }
 
+const LS_CLEANUP_VERSION_KEY = 'gcd_usmba_apps_cleanup_version';
+const CURRENT_APPS_CLEANUP_VERSION = 'v2_clean_sara_idrissi_and_youssef';
+
+export const REMOVED_TEST_APPLICATION_IDS = new Set<string>([
+  'app-usmba-2026-042',
+  'app-usmba-2026-033',
+  'app-usmba-2026-055',
+  'app-usmba-2026-077',
+  'app-usmba-2026-061',
+  'app-usmba-2026-092',
+  'app-usmba-2026-018',
+]);
+
+function getApplicationStatusRank(st?: string): number {
+  switch (st) {
+    case 'INSCRIT_DEFINITIF':
+      return 11;
+    case 'INSCRIPTION_DEFINITIVE':
+    case 'INSCRITE':
+      return 10;
+    case 'INSCRIPTION_EN_COURS':
+      return 9;
+    case 'VALIDE_LABO':
+      return 8;
+    case 'VALIDE_ENCADRANT':
+    case 'ADMISE_LISTE_PRINCIPALE':
+    case 'ENTRETIEN_REALISE':
+      return 7;
+    case 'EN_ATTENTE_VALIDATION_ENCADRANT':
+    case 'CONVOQUEE':
+    case 'EN_EVALUATION':
+      return 6;
+    case 'VERIFICATION_CONFORME':
+      return 5;
+    case 'EN_ATTENTE_VERIFICATION':
+      return 4;
+    case 'SOUMIS':
+    case 'SOUMISE':
+      return 3;
+    default:
+      return 1;
+  }
+}
+
 export async function savePersistedApplication(app: ApplicationBasket): Promise<void> {
   // Strip transient blob: URLs before saving; keep fileDataUrl so blob: URLs are recreated cleanly on load
   const cleanApp: ApplicationBasket = {
@@ -341,6 +385,131 @@ export async function getAllPersistedApplications(): Promise<ApplicationBasket[]
     });
   }
   return readLocalFallback<ApplicationBasket>(LS_APPS_FALLBACK_KEY);
+}
+
+export async function replaceAllPersistedApplications(apps: ApplicationBasket[]): Promise<void> {
+  const cleanList: ApplicationBasket[] = apps.map((app) => ({
+    ...app,
+    documents: (app.documents || []).map((doc) => ({
+      ...doc,
+      fileUrl: doc.fileUrl?.startsWith('blob:') ? undefined : doc.fileUrl,
+    })),
+  }));
+
+  const db = await openDatabase();
+  if (db) {
+    await new Promise<void>((resolve) => {
+      try {
+        const tx = db.transaction(APPS_STORE, 'readwrite');
+        const store = tx.objectStore(APPS_STORE);
+        store.clear();
+        for (const item of cleanList) {
+          store.put(item);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  writeLocalFallback(LS_APPS_FALLBACK_KEY, cleanList);
+}
+
+export async function cleanupAndSyncPersistedApplications(
+  baselineApps: ApplicationBasket[]
+): Promise<ApplicationBasket[]> {
+  const existingApps = await getAllPersistedApplications();
+  const cleanupDone =
+    typeof window !== 'undefined' &&
+    window.localStorage.getItem(LS_CLEANUP_VERSION_KEY) === CURRENT_APPS_CLEANUP_VERSION;
+
+  const saraBaseline = baselineApps.find(
+    (a) => a.id === 'app-usmba-2026-sara' || a.candidateEmail?.toLowerCase() === 'sara.idrissi@usmba.ac.ma'
+  );
+  const secondBaseline = baselineApps.find((a) => a.id !== saraBaseline?.id);
+
+  if (!cleanupDone) {
+    // One-time purge of all duplicate/test persisted applications while preserving Sara Idrissi's progressed status if any
+    const saraCandidates = existingApps.filter(
+      (a) =>
+        a.candidateId === 'usr-candidate-sara' ||
+        a.candidateEmail?.toLowerCase() === 'sara.idrissi@usmba.ac.ma' ||
+        a.candidateName?.toLowerCase().trim() === 'sara idrissi'
+    );
+
+    const bestSara = saraCandidates.sort((a, b) => {
+      const rankDiff = getApplicationStatusRank(b.currentStatut) - getApplicationStatusRank(a.currentStatut);
+      if (rankDiff !== 0) return rankDiff;
+      return (b.submittedAt || '').localeCompare(a.submittedAt || '');
+    })[0];
+
+    const cleanedApps: ApplicationBasket[] = [];
+
+    if (saraBaseline) {
+      const shouldKeepProgressed =
+        bestSara &&
+        (getApplicationStatusRank(bestSara.currentStatut) > getApplicationStatusRank(saraBaseline.currentStatut) ||
+          Boolean(bestSara.officialAttestationNumber));
+      cleanedApps.push(
+        shouldKeepProgressed
+          ? {
+              ...saraBaseline,
+              currentStatut: bestSara.currentStatut,
+              status: bestSara.status || bestSara.currentStatut,
+              officialAttestationNumber: bestSara.officialAttestationNumber || saraBaseline.officialAttestationNumber,
+              avisDirecteur: bestSara.avisDirecteur || saraBaseline.avisDirecteur,
+              signatures: bestSara.signatures || saraBaseline.signatures,
+              interview: bestSara.interview || saraBaseline.interview,
+            }
+          : saraBaseline
+      );
+    }
+
+    if (secondBaseline) {
+      const existingSecond = existingApps.find((a) => a.id === secondBaseline.id);
+      const shouldKeepSecondProgressed =
+        existingSecond &&
+        (getApplicationStatusRank(existingSecond.currentStatut) > getApplicationStatusRank(secondBaseline.currentStatut) ||
+          Boolean(existingSecond.officialAttestationNumber));
+      cleanedApps.push(shouldKeepSecondProgressed ? { ...secondBaseline, ...existingSecond } : secondBaseline);
+    }
+
+    await replaceAllPersistedApplications(cleanedApps);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LS_CLEANUP_VERSION_KEY, CURRENT_APPS_CLEANUP_VERSION);
+    }
+    return cleanedApps;
+  }
+
+  // After cleanup, ensure no removed test IDs or duplicate emails leak back in
+  const dedupedByEmail = new Map<string, ApplicationBasket>();
+  for (const item of [...baselineApps, ...existingApps]) {
+    if (!item || !item.id || REMOVED_TEST_APPLICATION_IDS.has(item.id)) continue;
+    const key = (item.candidateEmail || item.candidateId || item.id).trim().toLowerCase();
+    const prev = dedupedByEmail.get(key);
+    if (!prev) {
+      dedupedByEmail.set(key, item);
+    } else {
+      const prevRank = getApplicationStatusRank(prev.currentStatut);
+      const currRank = getApplicationStatusRank(item.currentStatut);
+      if (currRank > prevRank || (item.officialAttestationNumber && !prev.officialAttestationNumber)) {
+        dedupedByEmail.set(key, {
+          ...prev,
+          ...item,
+          id: prev.id,
+          codeCandidature: prev.codeCandidature || item.codeCandidature,
+        });
+      }
+    }
+  }
+
+  const normalizedList = Array.from(dedupedByEmail.values());
+  if (normalizedList.length !== existingApps.length) {
+    await replaceAllPersistedApplications(normalizedList);
+  }
+  return normalizedList;
 }
 
 export function applyPersistedDocumentsToApplication(

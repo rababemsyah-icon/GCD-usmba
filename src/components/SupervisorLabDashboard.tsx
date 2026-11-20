@@ -388,30 +388,108 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
         </div>
       ) : (
         <div className="space-y-5">
-          {/* Candidate Queue Selector (if multiple candidates) */}
-          {applications.length > 1 && (
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-              <span className="text-slate-500 font-semibold shrink-0">File d'attente ({applications.length}) :</span>
-              {applications.map((app, idx) => {
-                const isSelected = app.id === activeApp.id;
-                return (
-                  <button
-                    key={app.id}
-                    type="button"
-                    onClick={() => setSelectedAppId(app.id)}
-                    className={`px-3 py-1.5 rounded-xl font-semibold transition-all shrink-0 cursor-pointer border ${
-                      isSelected
-                        ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                        : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
-                    }`}
-                  >
-                    <span>{idx + 1}. {app.candidateName}</span>
-                    <span className="ml-1.5 opacity-70 font-mono text-[11px]">
-                      ({app.meritScore || 88.75}/100)
-                    </span>
-                  </button>
-                );
-              })}
+          {/* File de candidatures — Liste verticale structurée */}
+          {applications.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
+                <div className="text-xs font-bold text-slate-900">
+                  File de candidatures ({applications.length})
+                </div>
+                <span className="text-[11px] text-slate-500">
+                  Cliquez sur une ligne pour consulter et évaluer le dossier
+                </span>
+              </div>
+
+              <div className="divide-y divide-slate-100">
+                {applications.map((app, idx) => {
+                  const isSelected = app.id === activeApp.id;
+                  const scoreVal = app.meritScore ?? 85;
+                  const isFinal =
+                    app.currentStatut === 'INSCRIT_DEFINITIF' ||
+                    app.currentStatut === 'INSCRIPTION_DEFINITIVE' ||
+                    app.currentStatut === 'INSCRITE';
+                  const isRejected =
+                    app.currentStatut === 'REJETEE' || app.currentStatut === 'REFUSEE';
+                  const statusBadgeClass = isFinal
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : isRejected
+                    ? 'bg-rose-50 text-rose-800 border-rose-200'
+                    : app.currentStatut === 'VALIDE_LABO' || app.currentStatut === 'VALIDE_ENCADRANT'
+                    ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200';
+
+                  return (
+                    <button
+                      key={app.id}
+                      type="button"
+                      onClick={() => setSelectedAppId(app.id)}
+                      className={`w-full text-left px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-colors cursor-pointer ${
+                        isSelected
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-white hover:bg-slate-50 text-slate-900'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className={`w-6 h-6 rounded-full text-[11px] font-bold font-mono flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'bg-white text-slate-900'
+                              : 'bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}
+                        >
+                          {idx + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-xs sm:text-sm truncate">
+                              {app.candidateName}
+                            </span>
+                            <span
+                              className={`font-mono text-[11px] font-semibold px-2 py-0.5 rounded border ${
+                                isSelected
+                                  ? 'bg-white/10 text-slate-100 border-white/20'
+                                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {app.codeCandidature || app.id}
+                            </span>
+                          </div>
+                          <div
+                            className={`text-[11px] truncate mt-0.5 ${
+                              isSelected ? 'text-slate-300' : 'text-slate-500'
+                            }`}
+                          >
+                            {app.candidat?.etablissementOrigine || 'USMBA Fès'} • CIN :{' '}
+                            {app.candidateCin || '-'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 shrink-0 pl-9 sm:pl-0">
+                        <span
+                          className={`font-mono text-xs font-bold px-2.5 py-1 rounded-lg border whitespace-nowrap ${
+                            isSelected
+                              ? 'bg-white/10 text-white border-white/20'
+                              : 'bg-slate-50 text-slate-800 border-slate-200'
+                          }`}
+                        >
+                          {scoreVal}/100
+                        </span>
+
+                        <span
+                          className={`text-[11px] font-bold px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                            isSelected
+                              ? 'bg-white text-slate-900 border-white'
+                              : statusBadgeClass
+                          }`}
+                        >
+                          {app.currentStatut}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
