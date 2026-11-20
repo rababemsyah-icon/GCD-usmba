@@ -1,44 +1,64 @@
-// StatutCandidature enumeration strictly from GCD State Transition & Class diagrams
+// State Machine Lifecycle for Candidatures (strictly adheres to specification 8)
 export type StatutCandidature =
-  | 'BROUILLON_INCOMPLET'
-  | 'BROUILLON_COMPLET'
+  | 'BROUILLON'
+  | 'EN_COMPLETION'
+  | 'EN_ATTENTE_PIECES'
+  | 'SOUMISE'
   | 'SOUMIS'
-  | 'EN_ATTENTE_VERIFICATION'
-  | 'CONFORME'
-  | 'NON_CONFORME'
+  | 'COMPLEMENT_REQUIS'
   | 'MODIFICATION_REQUISE'
+  | 'EN_ATTENTE_VERIFICATION'
+  | 'VERIFICATION_CONFORME'
   | 'EN_ATTENTE_VALIDATION_ENCADRANT'
   | 'VALIDE_ENCADRANT'
   | 'VALIDE_LABO'
   | 'INSCRIPTION_DEFINITIVE'
-  | 'REJETE';
+  | 'INSCRIT_DEFINITIF'
+  | 'REJETEE'
+  | 'EN_EVALUATION'
+  | 'CONVOQUEE'
+  | 'ENTRETIEN_REALISE'
+  | 'ADMISE_LISTE_PRINCIPALE'
+  | 'LISTE_ATTENTE'
+  | 'REFUSEE'
+  | 'INSCRIPTION_EN_COURS'
+  | 'INSCRITE'
+  | 'RETIREE'
+  | 'EXPIREE';
 
-// StatutConformite enumeration for document management
-export type StatutConformite =
-  | 'EN_ATTENTE'
+// Document Status strictly from specification 3
+export type StatutPiece =
+  | 'DEPOSEE'
+  | 'EN_CONTROLE'
   | 'CONFORME'
   | 'NON_CONFORME'
-  | 'REMPLACEMENT_REQUIS';
+  | 'COMPLEMENT_DEMANDE'
+  | 'REMPLACEE'
+  | 'VUE_AU_GUICHET'
+  | 'MANQUANTE';
 
-// RoleName enumeration from Security & Authorization (RBAC) diagram
+export type StatutConformite = StatutPiece;
+
+// Strict Roles (spec 1)
 export type RoleName =
+  | 'VISITEUR'
   | 'CANDIDAT'
-  | 'ENSEIGNANT'
   | 'DIRECTEUR_THESE'
-  | 'COENCADRANT'
   | 'DIRECTEUR_LABO'
-  | 'DIRECTEUR_CED'
-  | 'ADMINISTRATEUR'
-  | 'AGENT_PEDAGOGIQUE';
+  | 'RESPONSABLE_CED'
+  | 'ADMINISTRATION'
+  | 'SUPER_ADMIN';
 
-// Backward compatibility alias for UI role switcher
 export type UserRole =
+  | 'visiteur'
   | 'candidat'
   | 'agent_pedagogique'
   | 'directeur'
   | 'coencadrant'
   | 'chef_labo'
-  | 'admin_cedoc';
+  | 'admin_cedoc'
+  | 'administration'
+  | 'super_admin';
 
 export interface Personne {
   cin: string;
@@ -56,10 +76,12 @@ export interface Candidat extends Personne {
 }
 
 export interface Enseignant extends Personne {
-  som: string; // Statut d'occupation ministérielle (matricule)
+  som: string; // Statut d'occupation ministérielle
   grade: string; // PES, PH, PA
   specialite: string;
 }
+
+export type AccountStatus = 'ACTIF' | 'INACTIF';
 
 export interface User {
   id: string;
@@ -67,26 +89,66 @@ export interface User {
   email: string;
   fullName: string;
   role: RoleName;
+  status: AccountStatus;
   isEnabled: boolean;
   avatarUrl?: string;
+  establishmentId?: string;
   establishment?: string;
+  laboratoryId?: string;
   laboratory?: string;
   cinNumber?: string;
   cneNumber?: string;
   ssoProvider?: string;
   ocrVerified?: boolean;
+  createdAt?: string;
+  deactivatedAt?: string;
+  deactivatedBy?: string;
+  lastLoginAt?: string;
+  linkedSubjectsCount?: number;
+  linkedApplicationsCount?: number;
+}
+
+export interface CampaignRules {
+  id: string;
+  code: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  isOpen: boolean;
+  maxChoicesPerCandidate: number;
+  maxPdfSizeMB: number;
+  allowedFileExtensions: string[];
+}
+
+export interface DocumentRule {
+  type: 'CIN' | 'DIPLOME_BAC' | 'DIPLOME_LICENCE' | 'DIPLOME_MASTER' | 'RELEVE_NOTES' | 'PHOTO_IDENTITE' | 'CHARTE_SIGNEE';
+  label: string;
+  allowedExtensions: string[];
+  maxSizeMB: number;
+  required: boolean;
+  contentRule: string;
 }
 
 export interface CandidatureDocument {
   id: string;
   docId: string;
+  docType: 'CIN' | 'DIPLOME_BAC' | 'DIPLOME_LICENCE' | 'DIPLOME_MASTER' | 'RELEVE_NOTES' | 'PHOTO_IDENTITE' | 'CHARTE_SIGNEE' | 'PROJET';
   title: string;
   fileType: string;
   storagePath: string;
-  dateUploaded: string;
-  conformite: StatutConformite;
+  dateUploaded?: string;
+  conformite: StatutPiece;
   rejectionReason?: string;
   fileSize?: string;
+  verifiedByGuichet?: boolean;
+  guichetAgentName?: string;
+  guichetDate?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  uploadedFileName?: string;
+  fileUrl?: string;
+  fileDataUrl?: string;
+  isRealUpload?: boolean;
 }
 
 export interface Notification {
@@ -100,6 +162,22 @@ export interface Notification {
   targetUserId?: string;
   dateLimitAction?: string;
   actionCompleted?: boolean;
+  actionUrl?: string;
+}
+
+export interface SimulatedEmail {
+  id: string;
+  to: string;
+  toName: string;
+  from: string;
+  subject: string;
+  body: string;
+  type: 'INFORMATIVE' | 'ACTION';
+  actionLabel?: string;
+  actionUrl?: string;
+  deadline?: string;
+  sentAt: string;
+  applicationId?: string;
 }
 
 export interface AuditLog {
@@ -112,6 +190,8 @@ export interface AuditLog {
   affectedEntityName: string;
   affectedEntityId: string;
   details: string;
+  beforeState?: string;
+  afterState?: string;
 }
 
 export interface EcheanceCalendrier {
@@ -119,8 +199,8 @@ export interface EcheanceCalendrier {
   stageName: string;
   startDate: string;
   deadline: string;
-  isMilestone: boolean;
-  isCompleted: boolean;
+  status: 'ACCOMPLIE' | 'EN_COURS' | 'A_VENIR' | 'EN_RETARD';
+  description: string;
   isCurrent: boolean;
 }
 
@@ -146,7 +226,7 @@ export interface Subject {
 
 export interface BasketChoice {
   subjectId: string;
-  rank: 1 | 2 | 3;
+  rank: number;
   addedAt: string;
 }
 
@@ -168,7 +248,7 @@ export interface FormationDoctorale {
 export interface StructureRecherche {
   nom: string;
   acronyme: string;
-  type: string; // Laboratoire, Équipe, Centre
+  type: string;
 }
 
 export interface ApplicationBasket {
@@ -182,10 +262,11 @@ export interface ApplicationBasket {
   candidateCne: string;
   choices: BasketChoice[];
   currentStatut: StatutCandidature;
-  status: string; // legacy UI adapter
+  status?: string;
   submittedAt?: string;
   meritScore?: number;
   matchingScore?: number;
+  meritJustification?: string[];
   assignedSubjectId?: string;
   documents: CandidatureDocument[];
   candidat: Candidat;
@@ -205,6 +286,8 @@ export interface ApplicationBasket {
     scheduledTime?: string;
     room?: string;
     evaluatedAt?: string;
+    decision?: 'ADMISE_LISTE_PRINCIPALE' | 'LISTE_ATTENTE' | 'REFUSEE';
+    decisionReason?: string;
   };
   signatures: {
     candidat: DigitalSignature;
@@ -214,11 +297,22 @@ export interface ApplicationBasket {
   };
   charterDocumentHash?: string;
   officialAttestationNumber?: string;
+  qrCodeVerificationUrl?: string;
+  isProvisionalWithoutDocuments?: boolean;
+  avisDirecteur?: {
+    avis: 'FAVORABLE' | 'DEFAVORABLE' | 'COMPLEMENT';
+    commentaire?: string;
+    evaluatedAt: string;
+    evaluatorName: string;
+  };
 }
 
 export interface CandidateProfile {
   id: string;
   userId: string;
+  fullName?: string;
+  nom?: string;
+  prenom?: string;
   cinNumber: string;
   cneNumber: string;
   birthDate: string;

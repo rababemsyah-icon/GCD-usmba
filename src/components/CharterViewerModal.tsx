@@ -51,17 +51,17 @@ export const CharterViewerModal: React.FC<CharterViewerModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 overflow-y-auto">
       {/* Backdrop with click-to-close */}
       <div
-        className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs transition-opacity"
+        className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
         onClick={onClose}
         title="Cliquer pour fermer"
       />
 
       <div
-        className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-300 overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col"
+        className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col text-slate-900"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header Control Bar */}
-        <div className="bg-slate-900 text-white p-4 px-6 flex items-center justify-between border-b border-slate-800 shrink-0">
+        <div className="bg-slate-900 text-white p-4 px-6 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
@@ -90,7 +90,7 @@ export const CharterViewerModal: React.FC<CharterViewerModalProps> = ({
             </button>
             <button
               onClick={onClose}
-              className="p-2 rounded-xl bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
               title="Fermer l'aperçu (Échap)"
             >
               <X className="w-5 h-5" />
@@ -334,16 +334,16 @@ export const CharterViewerModal: React.FC<CharterViewerModalProps> = ({
         </div>
 
         {/* Modal Bottom Strip with explicit and functional Close Button */}
-        <div className="p-4 px-6 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
+        <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
           <div className="text-xs text-slate-500 hidden sm:block">
             Document juridique faisant foi au sens de la loi 53-05 relative à l'échange électronique des données juridiques.
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="w-full sm:w-auto py-2.5 px-6 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+            className="w-full sm:w-auto py-2.5 px-6 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm rounded-xl transition-all cursor-pointer shadow-xs flex items-center justify-center gap-2"
           >
-            <ArrowLeft className="w-4 h-4 text-slate-300" />
+            <ArrowLeft className="w-4 h-4" />
             <span>Fermer l'aperçu</span>
           </button>
         </div>

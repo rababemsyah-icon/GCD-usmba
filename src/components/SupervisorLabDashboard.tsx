@@ -4,37 +4,34 @@ import {
   ShieldCheck,
   Award,
   Calendar,
-  Send,
   FileCheck,
   CheckCircle2,
   Clock,
-  Sparkles,
   AlertCircle,
   ExternalLink,
-  Lock,
   XCircle,
-  FileText,
-  UserPlus,
   Building,
   Check,
-  AlertTriangle,
-  Download,
-  Printer,
+  X,
+  ChevronDown,
+  UserPlus,
+  Eye,
 } from 'lucide-react';
 import {
   ApplicationBasket,
   Subject,
-  ThesisExchangeMessage,
   UserRole,
   StatutConformite,
-  CandidatureDocument,
+  User,
 } from '../types';
+import { DossierPreviewModal } from './DossierPreviewModal';
+import { savePersistedApplication } from '../utils/documentPersistence';
 
 interface SupervisorLabDashboardProps {
   currentRole: UserRole;
+  currentUser?: Partial<User> | null;
   applications: ApplicationBasket[];
   allSubjects: Subject[];
-  exchangeMessages: ThesisExchangeMessage[];
   onScoreInterview: (
     appId: string,
     scores: {
@@ -47,59 +44,62 @@ interface SupervisorLabDashboardProps {
     }
   ) => void;
   onSignCharter: (role: string) => void;
-  onSendMessage: (msg: string, attachmentName?: string) => void;
   onOpenCharterModal: () => void;
   onRefreshApplications?: () => void;
 }
 
 export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
   currentRole,
+  currentUser,
   applications,
   allSubjects,
-  exchangeMessages,
   onScoreInterview,
   onSignCharter,
-  onSendMessage,
   onOpenCharterModal,
   onRefreshApplications,
 }) => {
+  const authHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(currentUser?.id ? { 'x-user-id': currentUser.id } : {}),
+    ...(currentUser?.role ? { 'x-user-role': currentUser.role } : {}),
+  };
   const [selectedAppId, setSelectedAppId] = useState<string>(applications[0]?.id || '');
 
-  // Interview state
+  // Interview deliberation & dossier preview modal states
+  const [showInterviewModal, setShowInterviewModal] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [specialite, setSpecialite] = useState(17.5);
   const [motivation, setMotivation] = useState(18.0);
   const [projet, setProjet] = useState(18.5);
   const [langues, setLangues] = useState(16.5);
   const [juryNotes, setJuryNotes] = useState(
-    'Candidat très brillant, maîtrise avancée des réseaux de neurones profonds. Recommandation unanime pour la Liste Principale.'
+    'Candidat très brillant, excellente maîtrise des fondamentaux. Recommandation unanime pour la Liste Principale.'
   );
   const [decision, setDecision] = useState('Admitted_Principal');
 
-  // Co-supervisor state for Thesis Director
-  const [assignCoSupervisor, setAssignCoSupervisor] = useState(true);
+  // Co-supervisor state for Thesis Director (Checkbox collapsed by default)
+  const [assignCoSupervisor, setAssignCoSupervisor] = useState(false);
   const [coSupervisorName, setCoSupervisorName] = useState('Dr. Fatima Zahra Alami');
   const [coSupervisorSom, setCoSupervisorSom] = useState('914201');
   const [coSupervisorGrade, setCoSupervisorGrade] = useState('Professeur Habilité (PH)');
   const [coSupervisorEtab, setCoSupervisorEtab] = useState('ENSA Fès');
 
   // Document verification modal/state for Agent Pédagogique
-  const [rejectingDocId, setRejectingDocId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState('Pièce floue ou incomplète. Veuillez téléverser un scan net.');
 
-  // Refusal prompt
+  // Refusal & Modification prompts + Direct Avis state
   const [isRefusing, setIsRefusing] = useState(false);
   const [refusalReason, setRefusalReason] = useState('');
-
-  // Exchange message
-  const [feedbackMsg, setFeedbackMsg] = useState('');
-  const [feedbackDoc, setFeedbackDoc] = useState('');
+  const [directAvis, setDirectAvis] = useState<'FAVORABLE' | 'DEFAVORABLE' | 'COMPLEMENT'>('FAVORABLE');
+  const [directAvisComment, setDirectAvisComment] = useState('');
+  const [isSubmittingAvis, setIsSubmittingAvis] = useState(false);
 
   // Feedback toast locally
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const showActionNotice = (msg: string) => {
     setActionNotice(msg);
-    setTimeout(() => setActionNotice(null), 4000);
+    setTimeout(() => setActionNotice(null), 3500);
   };
 
   const activeApp = applications.find((a) => a.id === selectedAppId) || applications[0];
@@ -111,66 +111,67 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
     allSubjects[0];
 
   // Role details mapping
-  const roleConfig = {
-    agent_pedagogique: {
-      title: 'Espace Contrôle & Conformité Documentaire',
-      actorName: 'Mme. Imane Bernoussi (Agent Pédagogique - Pôle Doctoral)',
-      badge: 'Contrôle Administratif',
-      color: 'bg-amber-50 text-amber-900 border-amber-200',
-    },
-    directeur: {
-      title: 'Espace Direction de Thèse',
-      actorName: 'Pr. Mustapha Bennani (Directeur de Thèse - FST Fès)',
-      badge: 'Direction Scientifique',
-      color: 'bg-indigo-50 text-indigo-900 border-indigo-200',
-    },
-    coencadrant: {
-      title: 'Espace Co-Encadrement Doctoral',
-      actorName: 'Dr. Fatima Zahra Alami (Co-Encadrant - ENSA Fès)',
-      badge: 'Co-Direction',
-      color: 'bg-sky-50 text-sky-900 border-sky-200',
-    },
-    chef_labo: {
-      title: 'Espace Direction de Structure de Recherche',
-      actorName: 'Dr. Karim El Amrani (Chef du Laboratoire LISER)',
-      badge: 'Structure de Recherche',
-      color: 'bg-emerald-50 text-emerald-900 border-emerald-200',
-    },
-    admin_cedoc: {
-      title: 'Espace Direction du Centre d’Études Doctorales (CEDoc ST)',
-      actorName: 'Pr. Rachid El Ghoumari (Directeur du CEDoc Sciences & Technologies)',
-      badge: 'Validation Finale & Attestation',
-      color: 'bg-purple-50 text-purple-900 border-purple-200',
+  const roleConfig: Record<UserRole, { title: string; actorName: string; badge: string }> = {
+    visiteur: {
+      title: 'Espace Public',
+      actorName: 'Visiteur',
+      badge: 'Public',
     },
     candidat: {
       title: 'Espace Candidat',
       actorName: 'Youssef Alaoui Mdaghri',
       badge: 'Doctorant',
-      color: 'bg-slate-50 text-slate-900 border-slate-200',
     },
-  }[currentRole] || {
-    title: 'Espace Institutionnel GCD-USMBA',
-    actorName: 'Pôle Doctoral',
-    badge: 'Institutionnel',
-    color: 'bg-slate-50 text-slate-900 border-slate-200',
+    agent_pedagogique: {
+      title: 'Contrôle & Conformité Documentaire',
+      actorName: 'Mme. Imane Bernoussi (Pôle Doctoral)',
+      badge: 'Contrôle Administratif',
+    },
+    directeur: {
+      title: 'Espace Direction de Thèse',
+      actorName: 'Pr. Mustapha Bennani (FST Fès)',
+      badge: 'Direction Scientifique',
+    },
+    coencadrant: {
+      title: 'Co-Encadrement Doctoral',
+      actorName: 'Dr. Fatima Zahra Alami (ENSA Fès)',
+      badge: 'Co-Direction',
+    },
+    chef_labo: {
+      title: 'Direction de Structure de Recherche',
+      actorName: 'Dr. Karim El Amrani (Laboratoire LISER)',
+      badge: 'Laboratoire',
+    },
+    admin_cedoc: {
+      title: 'Direction du Centre d’Études Doctorales (CEDoc ST)',
+      actorName: 'Pr. Rachid El Ghoumari (Directeur CEDoc ST)',
+      badge: 'CEDoc',
+    },
+    administration: {
+      title: 'Scolarité Centrale & Contrôle',
+      actorName: 'Mme. Imane Bernoussi (Scolarité Centrale)',
+      badge: 'Scolarité',
+    },
+    super_admin: {
+      title: 'Super-Administration USMBA',
+      actorName: 'Administrateur Système',
+      badge: 'Système',
+    },
   };
 
-  // Signature state for current role
+  const activeRoleConfig = roleConfig[currentRole] || roleConfig.directeur;
+
   const isSupervisor = currentRole === 'directeur';
   const isLabHead = currentRole === 'chef_labo';
   const isCedoc = currentRole === 'admin_cedoc';
   const isAgent = currentRole === 'agent_pedagogique';
-  const isCoSupervisor = currentRole === 'coencadrant';
 
-  const signatureState = isSupervisor
-    ? activeApp?.signatures.directeur
-    : isLabHead
-    ? activeApp?.signatures.chef_labo
-    : isCedoc
-    ? activeApp?.signatures.directeur_ced
-    : null;
-
-  const isSignedByMe = signatureState?.status === 'Signed';
+  // Has passed admissibility / interview eligible
+  const isEligibleForInterview =
+    activeApp &&
+    activeApp.currentStatut !== 'BROUILLON' &&
+    activeApp.currentStatut !== 'EN_COMPLETION' &&
+    activeApp.currentStatut !== 'REJETEE';
 
   // 1. Agent Pédagogique Document Verification Handlers
   const handleVerifyDocument = async (docId: string, conformite: StatutConformite, reason?: string) => {
@@ -178,20 +179,23 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
     try {
       const res = await fetch(`/api/candidatures/${activeApp.id}/verify-doc`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           docId,
           conformite,
           rejectionReason: reason,
-          verifiedBy: 'Mme. Imane Bernoussi',
+          verifiedBy: currentUser?.fullName || 'Mme. Imane Bernoussi',
         }),
       });
       const data = await res.json();
-      if (data.application) {
+      if (!res.ok) {
+        showActionNotice(data.error || 'Action refusée par les règles de droits d’accès.');
+      } else if (data.application) {
+        await savePersistedApplication(data.application);
         showActionNotice(
           conformite === 'CONFORME'
-            ? 'Pièce validée CONFORME. Événement validerConformiteDoc() consigné.'
-            : 'Pièce signalée NON CONFORME. NotificationAction envoyée au candidat.'
+            ? 'Pièce validée conforme.'
+            : 'Complément de pièce demandé au candidat.'
         );
         if (onRefreshApplications) onRefreshApplications();
       }
@@ -200,70 +204,92 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
     }
   };
 
-  // 2. Thesis Director Handlers (approuverSujet / refuserSujet)
-  const handleApproveSubject = async () => {
+  const advanceToNextCandidate = (currentId: string) => {
+    const list = applications;
+    const currentIndex = list.findIndex((a) => a.id === currentId);
+    if (currentIndex !== -1 && currentIndex + 1 < list.length) {
+      setSelectedAppId(list[currentIndex + 1].id);
+    } else if (list.length > 1) {
+      const remaining = list.filter((a) => a.id !== currentId);
+      if (remaining.length > 0) setSelectedAppId(remaining[0].id);
+    }
+  };
+
+  // 2. Thesis Director Direct Avis Handler (Favorable / Défavorable / Demande de complément + optional comment)
+  const handleSubmitDirectAvis = async (
+    avisChoice: 'FAVORABLE' | 'DEFAVORABLE' | 'COMPLEMENT',
+    commentText: string
+  ) => {
     if (!activeApp) return;
+    setIsSubmittingAvis(true);
     try {
-      const coEncadrantData = assignCoSupervisor
-        ? {
-            cin: 'C219804',
-            cne: '',
-            nom: 'Alami',
-            prenom: 'Fatima Zahra',
-            email: 'fz.alami@usmba.ac.ma',
-            telephone: '+212 535 60 70 80',
-            som: coSupervisorSom,
-            grade: coSupervisorGrade,
-            specialite: 'Cybersécurité & Blockchain',
-          }
-        : undefined;
+      const coEncadrantData =
+        assignCoSupervisor && avisChoice === 'FAVORABLE'
+          ? {
+              cin: 'C219804',
+              cne: '',
+              nom: 'Alami',
+              prenom: 'Fatima Zahra',
+              email: 'fz.alami@usmba.ac.ma',
+              telephone: '+212 535 60 70 80',
+              som: coSupervisorSom,
+              grade: coSupervisorGrade,
+              specialite: 'Cybersécurité & IA',
+            }
+          : undefined;
 
-      const res = await fetch(`/api/candidatures/${activeApp.id}/approuver-sujet`, {
+      const res = await fetch(`/api/candidatures/${activeApp.id}/avis-directeur`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ coEncadrant: coEncadrantData }),
+        headers: authHeaders,
+        body: JSON.stringify({
+          avis: avisChoice,
+          commentaire: commentText,
+          coEncadrant: coEncadrantData,
+          actorName: currentUser?.fullName || 'Pr. Mustapha Bennani',
+        }),
       });
       const data = await res.json();
-      if (data.application) {
-        showActionNotice('Sujet de thèse approuvé (approuverSujet). Transmission vers Directeur de Labo.');
+      if (res.ok && data.application) {
+        await savePersistedApplication(data.application);
+        const label =
+          avisChoice === 'FAVORABLE'
+            ? 'Avis Favorable'
+            : avisChoice === 'COMPLEMENT'
+            ? 'Demande de complément'
+            : 'Avis Défavorable';
+        showActionNotice(`${label} enregistré pour ${activeApp.candidateName}. E-mail envoyé automatiquement.`);
+        setDirectAvisComment('');
+        advanceToNextCandidate(activeApp.id);
         if (onRefreshApplications) onRefreshApplications();
+      } else if (!res.ok) {
+        showActionNotice(data.error || 'Action non autorisée pour ce profil.');
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsSubmittingAvis(false);
     }
   };
 
-  const handleRejectSubject = async () => {
-    if (!activeApp || !refusalReason) return;
-    try {
-      const res = await fetch(`/api/candidatures/${activeApp.id}/refuser-sujet`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: refusalReason }),
-      });
-      const data = await res.json();
-      if (data.application) {
-        showActionNotice('Candidature rejetée (refuserSujet) et notifiée au candidat.');
-        setIsRefusing(false);
-        if (onRefreshApplications) onRefreshApplications();
-      }
-    } catch (err) {
-      console.error(err);
-    }
+  const handleApproveSubject = async () => {
+    await handleSubmitDirectAvis('FAVORABLE', directAvisComment);
   };
 
-  // 3. Lab Director Handlers (validerRattachement / refuserRattachement)
+  // 3. Lab Director Handlers
   const handleValidateLabo = async () => {
     if (!activeApp) return;
     try {
       const res = await fetch(`/api/candidatures/${activeApp.id}/valider-rattachement`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({}),
       });
       const data = await res.json();
-      if (data.application) {
-        showActionNotice('Rattachement LISER validé (validerRattachement). Transmission vers CEDoc.');
+      if (!res.ok) {
+        showActionNotice(data.error || 'Validation réservée à la Direction de structure.');
+      } else if (data.application) {
+        await savePersistedApplication(data.application);
+        showActionNotice('Rattachement au laboratoire validé. Dossier transmis au CEDoc.');
         if (onRefreshApplications) onRefreshApplications();
       }
     } catch (err) {
@@ -276,12 +302,15 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
     try {
       const res = await fetch(`/api/candidatures/${activeApp.id}/refuser-rattachement`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ reason: refusalReason }),
       });
       const data = await res.json();
-      if (data.application) {
-        showActionNotice('Rattachement refusé (refuserRattachement).');
+      if (!res.ok) {
+        showActionNotice(data.error || 'Action réservée à la Direction de structure.');
+      } else if (data.application) {
+        await savePersistedApplication(data.application);
+        showActionNotice('Rattachement au laboratoire refusé.');
         setIsRefusing(false);
         if (onRefreshApplications) onRefreshApplications();
       }
@@ -290,20 +319,23 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
     }
   };
 
-  // 4. CEDoc Director Handler (validerInscriptionFinal)
+  // 4. CEDoc Director Handler
   const handleValidateFinalCedoc = async () => {
     if (!activeApp) return;
     try {
       const res = await fetch(`/api/candidatures/${activeApp.id}/valider-inscription-final`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        headers: authHeaders,
+        body: JSON.stringify({
+          actorName: currentUser?.fullName || 'Administration CEDoc',
+        }),
       });
       const data = await res.json();
-      if (data.application) {
-        showActionNotice(
-          `Inscription définitive actée ! Attestation délivrée : ${data.officialAttestationNumber}`
-        );
+      if (!res.ok) {
+        showActionNotice(data.error || 'Action réservée à l’Administration CEDoc.');
+      } else if (data.application) {
+        await savePersistedApplication(data.application);
+        showActionNotice(`Inscription définitive validée (INSCRIT_DEFINITIF). Attestation : ${data.officialAttestationNumber}`);
         if (onRefreshApplications) onRefreshApplications();
       }
     } catch (err) {
@@ -322,23 +354,15 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
       juryNotes,
       decision,
     });
-    showActionNotice('Grille de notation et délibération enregistrées.');
-  };
-
-  const handlePostSupervisorFeedback = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!feedbackMsg.trim() && !feedbackDoc) return;
-    onSendMessage(feedbackMsg, feedbackDoc || undefined);
-    setFeedbackMsg('');
-    setFeedbackDoc('');
-    showActionNotice('Message transmis au doctorant dans son carnet de thèse.');
+    setShowInterviewModal(false);
+    showActionNotice('Grille de délibération enregistrée avec succès.');
   };
 
   return (
-    <div className="space-y-6">
-      {/* Action Notification Banner if any */}
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* Toast Notice */}
       {actionNotice && (
-        <div className="p-4 rounded-2xl bg-slate-900 text-white text-xs font-semibold flex items-center justify-between border border-slate-700 shadow-md animate-in fade-in">
+        <div className="p-3.5 rounded-xl bg-slate-900 text-white text-xs font-semibold flex items-center justify-between border border-slate-700 shadow-md animate-in fade-in">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>{actionNotice}</span>
@@ -347,595 +371,655 @@ export const SupervisorLabDashboard: React.FC<SupervisorLabDashboardProps> = ({
             onClick={() => setActionNotice(null)}
             className="text-slate-400 hover:text-white cursor-pointer"
           >
-            Fermer
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* Header Banner */}
-      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${roleConfig.color}`}>
-              {roleConfig.badge}
-            </span>
-          </div>
-          <h2 className="text-lg sm:text-xl font-bold text-slate-900">
-            {roleConfig.title}
-          </h2>
-          <p className="text-xs text-slate-500">
-            {roleConfig.actorName}
-          </p>
-        </div>
-
-        {/* Current State Indicator */}
-        <div className="shrink-0 p-3 rounded-xl bg-slate-900 text-white text-xs space-y-1 border border-slate-800">
-          <div className="text-[10px] text-slate-400 uppercase font-semibold">
-            Statut du Dossier
-          </div>
-          <div className="text-xs font-mono font-bold text-emerald-400">
-            {activeApp ? activeApp.currentStatut || activeApp.status : 'Aucun'}
-          </div>
-        </div>
-      </div>
-
       {!hasActiveCandidate ? (
-        <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 shadow-sm max-w-md mx-auto">
-          <AlertCircle className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-slate-800">Aucune candidature en attente</h3>
-          <p className="text-xs text-slate-500 mt-1">
-            Les dossiers apparaissent dès qu'un candidat soumet son panier.
+        <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-xs max-w-md mx-auto space-y-3">
+          <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+            <CheckCircle2 className="w-6 h-6 text-slate-700" />
+          </div>
+          <h3 className="text-base font-bold text-slate-900">Aucune action requise</h3>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Vous n'avez aucun dossier de candidature en attente de traitement.
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Main Action Column */}
-          <div className="lg:col-span-7 space-y-6">
-            {/* Candidate Card */}
-            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-slate-900 text-white font-bold flex items-center justify-center text-sm">
-                    YA
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm">{activeApp.candidateName}</h3>
-                    <div className="text-[11px] text-slate-500 flex items-center gap-2 font-mono">
-                      <span>CIN: {activeApp.candidateCin}</span>
-                      <span>•</span>
-                      <span>CNE: {activeApp.candidateCne}</span>
-                    </div>
-                  </div>
-                </div>
+        <div className="space-y-5">
+          {/* Candidate Queue Selector (if multiple candidates) */}
+          {applications.length > 1 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+              <span className="text-slate-500 font-semibold shrink-0">File d'attente ({applications.length}) :</span>
+              {applications.map((app, idx) => {
+                const isSelected = app.id === activeApp.id;
+                return (
+                  <button
+                    key={app.id}
+                    type="button"
+                    onClick={() => setSelectedAppId(app.id)}
+                    className={`px-3 py-1.5 rounded-xl font-semibold transition-all shrink-0 cursor-pointer border ${
+                      isSelected
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                        : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    <span>{idx + 1}. {app.candidateName}</span>
+                    <span className="ml-1.5 opacity-70 font-mono text-[11px]">
+                      ({app.meritScore || 88.75}/100)
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  Score Mérite : {activeApp.meritScore}/100
-                </span>
+          {/* Section 1: Vue Dossier Synthétique Global */}
+          <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-5">
+            {/* Header: Candidate ID & Status */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                    {activeApp.codeCandidature || 'CAND-2026-089'}
+                  </span>
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                    {activeApp.currentStatut}
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold text-slate-900">{activeApp.candidateName}</h3>
+                <div className="text-xs text-slate-500 flex items-center gap-2 font-mono mt-0.5">
+                  <span>CIN: {activeApp.candidateCin}</span>
+                  <span>•</span>
+                  <span>CNE: {activeApp.candidateCne}</span>
+                  <span>•</span>
+                  <span>{activeApp.candidat?.etablissementOrigine || 'FST Fès'}</span>
+                </div>
               </div>
 
-              {/* Subject targeted */}
-              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Sujet postulé (1er Choix)</span>
-                <span className="font-bold text-slate-900 block">{assignedSubject?.title}</span>
-                <span className="text-[11px] text-slate-600 block">
-                  {assignedSubject?.laboratory} • {assignedSubject?.establishment}
-                </span>
-              </div>
+              <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowPreviewModal(true)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Voir le dossier & pièces</span>
+                </button>
 
-              {/* ACTOR 1: AGENT PÉDAGOGIQUE -> Document Compliance Control */}
-              {isAgent && (
-                <div className="space-y-4 pt-2">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
-                      <FileCheck className="w-4 h-4 text-amber-600" />
-                      Vérification des Pièces Requises (validerConformiteDoc)
-                    </h4>
-                    <span className="text-[11px] text-slate-500">
-                      {activeApp.documents.filter((d) => d.conformite === 'CONFORME').length} / {activeApp.documents.length} conformes
-                    </span>
-                  </div>
-
-                  <div className="space-y-2.5">
-                    {activeApp.documents.map((doc) => (
-                      <div
-                        key={doc.id}
-                        className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/70 hover:bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="space-y-0.5 max-w-sm">
-                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                            <span>{doc.title}</span>
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                                doc.conformite === 'CONFORME'
-                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                  : doc.conformite === 'REMPLACEMENT_REQUIS' || doc.conformite === 'NON_CONFORME'
-                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                  : 'bg-amber-100 text-amber-800 border border-amber-200'
-                              }`}
-                            >
-                              {doc.conformite}
-                            </span>
-                          </div>
-                          <div className="text-[11px] font-mono text-slate-500">
-                            {doc.storagePath} • {doc.fileSize || '1.5 MB'}
-                          </div>
-                          {doc.rejectionReason && (
-                            <div className="text-[11px] text-rose-600 font-medium">
-                              Motif: {doc.rejectionReason}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleVerifyDocument(doc.id, 'CONFORME')}
-                            className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-xs cursor-pointer transition-all"
-                            title="Valider la conformité de ce document"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Conforme</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRejectingDocId(doc.id);
-                              handleVerifyDocument(doc.id, 'REMPLACEMENT_REQUIS', rejectionReason);
-                            }}
-                            className="py-1.5 px-3 bg-white hover:bg-rose-50 text-rose-700 font-bold text-xs rounded-xl border border-rose-300 flex items-center gap-1 cursor-pointer transition-all"
-                            title="Signaler un défaut et exiger le remplacement de la pièce"
-                          >
-                            <XCircle className="w-3.5 h-3.5" />
-                            <span>Remplacement requis</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200 text-xs text-amber-900 leading-relaxed">
-                    <strong>Règle du Diagramme d'État :</strong> Dès que l'ensemble des pièces est validé CONFORME, la candidature bascule automatiquement vers l'état <code>EnAttenteValidationEncadrant</code>. Si une pièce est déclarée non conforme, le système transmet une <code>NotificationAction</code> au candidat vers l'état <code>ModificationRequise</code>.
-                  </div>
-                </div>
-              )}
-
-              {/* ACTOR 2: DIRECTEUR DE THÈSE -> Subject Approval, Co-supervisor & Decision */}
-              {isSupervisor && (
-                <div className="space-y-4 pt-2">
-                  <div className="p-4 rounded-2xl bg-indigo-50/60 border border-indigo-200 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-bold text-indigo-950 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                        <UserPlus className="w-4 h-4 text-indigo-700" />
-                        Rattachement d'un Co-Encadrant (Diagramme de Classes)
-                      </h4>
-                      <label className="flex items-center gap-1.5 text-xs text-indigo-900 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={assignCoSupervisor}
-                          onChange={(e) => setAssignCoSupervisor(e.target.checked)}
-                          className="rounded text-indigo-600"
-                        />
-                        <span>Activer co-encadrement</span>
-                      </label>
-                    </div>
-
-                    {assignCoSupervisor && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
-                        <div>
-                          <label className="block text-slate-700 font-semibold mb-0.5">Nom du Co-Encadrant :</label>
-                          <input
-                            type="text"
-                            value={coSupervisorName}
-                            onChange={(e) => setCoSupervisorName(e.target.value)}
-                            className="w-full p-2 rounded-xl border border-indigo-200 bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-700 font-semibold mb-0.5">Matricule SOM :</label>
-                          <input
-                            type="text"
-                            value={coSupervisorSom}
-                            onChange={(e) => setCoSupervisorSom(e.target.value)}
-                            className="w-full p-2 rounded-xl border border-indigo-200 bg-white font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-700 font-semibold mb-0.5">Grade Universitaire :</label>
-                          <input
-                            type="text"
-                            value={coSupervisorGrade}
-                            onChange={(e) => setCoSupervisorGrade(e.target.value)}
-                            className="w-full p-2 rounded-xl border border-indigo-200 bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-700 font-semibold mb-0.5">Établissement :</label>
-                          <input
-                            type="text"
-                            value={coSupervisorEtab}
-                            onChange={(e) => setCoSupervisorEtab(e.target.value)}
-                            className="w-full p-2 rounded-xl border border-indigo-200 bg-white"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions for Thesis Director: approuverSujet vs refuserSujet */}
-                  <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                        Décision d'Encadrement du Sujet (Événements Diagramme)
-                      </span>
-                      <button
-                        onClick={onOpenCharterModal}
-                        className="text-xs text-slate-300 hover:text-white underline cursor-pointer flex items-center gap-1"
-                      >
-                        <span>Aperçu Charte</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      <button
-                        type="button"
-                        onClick={handleApproveSubject}
-                        className="py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all"
-                      >
-                        <Check className="w-4 h-4" />
-                        <span>approuverSujet() → ValideEncadrant</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setIsRefusing(true)}
-                        className="py-3 px-4 bg-slate-800 hover:bg-rose-900/60 text-slate-200 hover:text-white font-bold text-xs rounded-xl border border-slate-700 flex items-center justify-center gap-2 cursor-pointer transition-all"
-                      >
-                        <XCircle className="w-4 h-4 text-rose-400" />
-                        <span>refuserSujet() → Rejete</span>
-                      </button>
-                    </div>
-
-                    {isRefusing && (
-                      <div className="pt-2 space-y-2 border-t border-slate-700 animate-in fade-in">
-                        <label className="block text-xs text-slate-300 font-semibold">
-                          Motif officiel du refus (consigné dans le Journal d'Audit) :
-                        </label>
-                        <input
-                          type="text"
-                          value={refusalReason}
-                          onChange={(e) => setRefusalReason(e.target.value)}
-                          placeholder="Ex: Capacité d'encadrement atteinte sur cet axe thématique..."
-                          className="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-600 text-white text-xs"
-                        />
-                        <div className="flex items-center gap-2 justify-end">
-                          <button
-                            type="button"
-                            onClick={() => setIsRefusing(false)}
-                            className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs rounded-lg cursor-pointer"
-                          >
-                            Annuler
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleRejectSubject}
-                            className="px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-lg cursor-pointer"
-                          >
-                            Confirmer Refus
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* ACTOR 3: DIRECTEUR DE LABO -> Lab Attachment Validation */}
-              {isLabHead && (
-                <div className="space-y-4 pt-2">
-                  <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-xs space-y-2">
-                    <div className="font-bold text-emerald-950 flex items-center gap-1.5">
-                      <Building className="w-4 h-4 text-emerald-700" />
-                      Rattachement à la Structure de Recherche : {activeApp.structureRecherche?.nom || 'LISER'}
-                    </div>
-                    <p className="text-slate-700 leading-relaxed">
-                      L'approbation du sujet par Pr. Mustapha Bennani est confirmée. En tant que Directeur de Structure, votre validation de rattachement (budget, moyens d'expérimentation et insertion dans les axes du labo) est requise.
-                    </p>
-                  </div>
-
-                  <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-3">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
-                      Arbitrage de la Structure de Recherche
-                    </span>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      <button
-                        type="button"
-                        onClick={handleValidateLabo}
-                        className="py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all"
-                      >
-                        <Check className="w-4 h-4" />
-                        <span>validerRattachement() → ValideLabo</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setIsRefusing(true)}
-                        className="py-3 px-4 bg-slate-800 hover:bg-rose-900/60 text-slate-200 hover:text-white font-bold text-xs rounded-xl border border-slate-700 flex items-center justify-center gap-2 cursor-pointer transition-all"
-                      >
-                        <XCircle className="w-4 h-4 text-rose-400" />
-                        <span>refuserRattachement() → Rejete</span>
-                      </button>
-                    </div>
-
-                    {isRefusing && (
-                      <div className="pt-2 space-y-2 border-t border-slate-700 animate-in fade-in">
-                        <label className="block text-xs text-slate-300 font-semibold">
-                          Motif du refus de rattachement au laboratoire :
-                        </label>
-                        <input
-                          type="text"
-                          value={refusalReason}
-                          onChange={(e) => setRefusalReason(e.target.value)}
-                          placeholder="Ex: Quotas d'accueil au laboratoire atteints..."
-                          className="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-600 text-white text-xs"
-                        />
-                        <div className="flex items-center gap-2 justify-end">
-                          <button
-                            type="button"
-                            onClick={() => setIsRefusing(false)}
-                            className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs rounded-lg cursor-pointer"
-                          >
-                            Annuler
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleRejectLabo}
-                            className="px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-lg cursor-pointer"
-                          >
-                            Confirmer Refus
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* ACTOR 4: DIRECTEUR CEDOC -> Final Registration & Attestation */}
-              {isCedoc && (
-                <div className="space-y-4 pt-2">
-                  <div className="p-4 rounded-2xl bg-purple-50/70 border border-purple-200 text-xs space-y-2">
-                    <div className="font-bold text-purple-950 flex items-center gap-1.5">
-                      <Award className="w-4 h-4 text-purple-700" />
-                      Validation Finale & Inscription Définitive (CEDoc ST)
-                    </div>
-                    <p className="text-slate-700 leading-relaxed">
-                      Toutes les étapes préalables sont franchies avec succès (Conformité documentaire, Approbation Directeur de Thèse, Validation Rattachement Laboratoire LISER). Votre validation finale scelle l'inscription doctorale définitive et émet l'attestation officielle.
-                    </p>
-                  </div>
-
-                  <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                        Décision Institutionnelle Finale
-                      </span>
-                      <button
-                        onClick={onOpenCharterModal}
-                        className="text-xs text-slate-300 hover:text-white underline cursor-pointer flex items-center gap-1"
-                      >
-                        <span>Aperçu Charte & Signatures</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </button>
-                    </div>
+                {isEligibleForInterview && (isSupervisor || isLabHead) && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(`/api/applications/${activeApp.id}/interview`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              scheduledDate: '2026-09-23',
+                              scheduledTime: '10:00',
+                              room: 'Salle des Thèses 2, FST Fès',
+                            }),
+                          });
+                          if (res.ok) {
+                            showActionNotice(`Convocation envoyée par e-mail à ${activeApp.candidateName}.`);
+                            if (onRefreshApplications) onRefreshApplications();
+                          }
+                        } catch (e) {
+                          console.error(e);
+                        }
+                      }}
+                      className="px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold border border-slate-300 shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-slate-600" />
+                      <span>Convoquer oral</span>
+                    </button>
 
                     <button
                       type="button"
-                      onClick={handleValidateFinalCedoc}
-                      className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all"
+                      onClick={() => setShowInterviewModal(true)}
+                      className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold border border-slate-300 shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
-                      <ShieldCheck className="w-4 h-4" />
-                      <span>validerInscriptionFinal() → InscriptionDefinitive</span>
+                      <Award className="w-4 h-4 text-slate-600" />
+                      <span>Délibération entretien oral</span>
                     </button>
-                  </div>
-                </div>
-              )}
-
-              {/* ACTOR 5: CO-ENCADRANT VIEW */}
-              {isCoSupervisor && (
-                <div className="p-4 rounded-2xl bg-sky-50/70 border border-sky-200 text-xs space-y-2">
-                  <div className="font-bold text-sky-950 flex items-center gap-1.5">
-                    <UserCheck className="w-4 h-4 text-sky-700" />
-                    Consultation Co-Direction de Thèse
-                  </div>
-                  <p className="text-slate-700 leading-relaxed">
-                    Vous êtes rattaché(e) en tant que co-encadrant(e) aux côtés de Pr. Mustapha Bennani. Vous avez un accès direct au carnet d'échange pour soumettre des remarques et orienter le candidat sur la méthodologie de recherche.
-                  </p>
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
 
-            {/* Oral Interview Scoring Grid (available for jury members) */}
-            {(isSupervisor || isLabHead) && (
-              <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <Award className="w-4 h-4 text-emerald-600" />
-                    Grille d'Évaluation & Délibération du Jury d'Entretien
-                  </h3>
-                  <span className="text-xs font-mono font-bold text-emerald-700">
-                    Moyenne : {Math.round(((specialite + motivation + projet + langues) / 4) * 100) / 100} / 20
+            {/* Vue Dossier Synthétique Global: 2 Highlight Blocks */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Block 1: État Global de Conformité */}
+              <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 space-y-2">
+                <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Dossier Complet — 6/6 pièces conformes par le système OCR</span>
+                </div>
+                <p className="text-[11px] text-emerald-800 leading-relaxed">
+                  Toutes les pièces (CIN, Baccalauréat, Licence, Master, Relevés de notes, Projet) ont été vérifiées et validées conformes au format PDF.
+                </p>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {['CIN', 'Baccalauréat', 'Licence', 'Master', 'Relevés S1-S4', 'Projet'].map((item) => (
+                    <span
+                      key={item}
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-white/80 border border-emerald-200 text-emerald-800"
+                    >
+                      ✓ {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Block 2: Score de Mérite Calculé Automatiquement */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Score de Mérite Calculé Automatiquement
+                  </span>
+                  <span className="text-xl font-bold font-mono text-slate-900">
+                    {activeApp.meritScore || 88.75} <span className="text-xs text-slate-400">/ 100</span>
                   </span>
                 </div>
+                <div className="text-xs text-slate-700 space-y-1">
+                  <div>
+                    <strong>Moyenne Master :</strong>{' '}
+                    <span className="font-mono font-semibold text-slate-900">
+                      {activeApp.candidat?.moyenneGenerale ? `${activeApp.candidat.moyenneGenerale}/20` : '16.51/20'}
+                    </span>{' '}
+                    (Mention Très Bien)
+                  </div>
+                  <div>
+                    <strong>Adéquation thématique :</strong>{' '}
+                    <span className="font-mono font-semibold text-slate-900">
+                      {activeApp.matchingScore || 95}%
+                    </span>{' '}
+                    avec le laboratoire
+                  </div>
+                </div>
+              </div>
+            </div>
 
-                <form onSubmit={handleSaveInterviewScores} className="space-y-4 text-xs">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-slate-700 font-semibold mb-1">
-                        1. Spécialité (/20)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        step="0.5"
-                        value={specialite}
-                        onChange={(e) => setSpecialite(Number(e.target.value))}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-400"
-                      />
+            {/* Target Subject Details */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1 text-xs">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Sujet postulé</span>
+              <div className="font-bold text-slate-900 text-sm leading-snug">{assignedSubject?.title}</div>
+              <div className="text-slate-500 text-[11px] pt-0.5">
+                {assignedSubject?.laboratory} • {assignedSubject?.establishment} • Direction : {assignedSubject?.professorName}
+              </div>
+            </div>
+
+            {/* ACTOR: DIRECTEUR DE THÈSE -> Co-supervisor Option & Unified Direct Actions Block */}
+            {isSupervisor && (
+              <div className="space-y-4 pt-2 border-t border-slate-100">
+                {/* Optional Co-supervisor Toggle */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+                  <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={assignCoSupervisor}
+                      onChange={(e) => setAssignCoSupervisor(e.target.checked)}
+                      className="rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                    />
+                    <span>Désigner un co-encadrant doctoral (optionnel)</span>
+                  </label>
+
+                  {assignCoSupervisor && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 animate-in fade-in duration-150">
+                      <div>
+                        <label className="block text-slate-500 text-[11px] mb-1">Nom du co-encadrant :</label>
+                        <input
+                          type="text"
+                          value={coSupervisorName}
+                          onChange={(e) => setCoSupervisorName(e.target.value)}
+                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-500 text-[11px] mb-1">Matricule SOM :</label>
+                        <input
+                          type="text"
+                          value={coSupervisorSom}
+                          onChange={(e) => setCoSupervisorSom(e.target.value)}
+                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-900 font-mono text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-500 text-[11px] mb-1">Grade universitaire :</label>
+                        <input
+                          type="text"
+                          value={coSupervisorGrade}
+                          onChange={(e) => setCoSupervisorGrade(e.target.value)}
+                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-500 text-[11px] mb-1">Établissement :</label>
+                        <input
+                          type="text"
+                          value={coSupervisorEtab}
+                          onChange={(e) => setCoSupervisorEtab(e.target.value)}
+                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-slate-700 font-semibold mb-1">
-                        2. Motivation (/20)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        step="0.5"
-                        value={motivation}
-                        onChange={(e) => setMotivation(Number(e.target.value))}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-slate-700 font-semibold mb-1">
-                        3. Projet de recherche (/20)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        step="0.5"
-                        value={projet}
-                        onChange={(e) => setProjet(Number(e.target.value))}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-slate-700 font-semibold mb-1">
-                        4. Langues & Communication (/20)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="20"
-                        step="0.5"
-                        value={langues}
-                        onChange={(e) => setLangues(Number(e.target.value))}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-400"
-                      />
-                    </div>
+                  )}
+                </div>
+
+                {/* Bloc d'Évaluation Direct : Avis (Favorable / Défavorable / Demande de complément) + Commentaire optionnel */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                      Évaluation directe — Avis du Directeur de Thèse :
+                    </span>
+                    {activeApp.avisDirecteur && (
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-white border border-slate-200 text-slate-700">
+                        Avis actuel : {activeApp.avisDirecteur.avis}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setDirectAvis('FAVORABLE')}
+                      className={`py-2.5 px-4 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all border ${
+                        directAvis === 'FAVORABLE'
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Check className="w-4 h-4 text-emerald-400 stroke-[3]" />
+                      <span>Avis Favorable</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDirectAvis('COMPLEMENT')}
+                      className={`py-2.5 px-4 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all border ${
+                        directAvis === 'COMPLEMENT'
+                          ? 'bg-amber-700 text-white border-amber-700 shadow-xs'
+                          : 'bg-white text-amber-800 border-amber-300 hover:bg-amber-50'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4" />
+                      <span>Demande de complément</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDirectAvis('DEFAVORABLE')}
+                      className={`py-2.5 px-4 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all border ${
+                        directAvis === 'DEFAVORABLE'
+                          ? 'bg-rose-700 text-white border-rose-700 shadow-xs'
+                          : 'bg-white text-rose-700 border-rose-300 hover:bg-rose-50'
+                      }`}
+                    >
+                      <XCircle className="w-4 h-4" />
+                      <span>Avis Défavorable</span>
+                    </button>
                   </div>
 
                   <div>
-                    <label className="block text-slate-700 font-semibold mb-1">
-                      Remarques de synthèse du Jury :
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Commentaire / Observations (optionnel) :
                     </label>
                     <textarea
                       rows={2}
-                      value={juryNotes}
-                      onChange={(e) => setJuryNotes(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                      value={directAvisComment}
+                      onChange={(e) => setDirectAvisComment(e.target.value)}
+                      placeholder="Ajouter un commentaire optionnel (précisions méthodologiques, remarques sur le dossier...)"
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-slate-700 font-semibold mb-1">
-                      Décision officielle :
-                    </label>
-                    <select
-                      value={decision}
-                      onChange={(e) => setDecision(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-400 bg-white"
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      disabled={isSubmittingAvis}
+                      onClick={() => handleSubmitDirectAvis(directAvis, directAvisComment)}
+                      className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer transition-colors shadow-xs disabled:opacity-50"
                     >
-                      <option value="Admitted_Principal">Admis sur Liste Principale</option>
-                      <option value="Admitted_Waiting">Admis sur Liste d'Attente</option>
-                      <option value="Rejected">Non Admis / Refusé</option>
-                    </select>
+                      {isSubmittingAvis ? 'Enregistrement...' : 'Enregistrer la décision'}
+                    </button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* ACTOR: DIRECTEUR DE LABO -> Laboratory Attachment */}
+            {isLabHead && (
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+                  <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                    <Building className="w-4 h-4 text-slate-600" />
+                    Rattachement au laboratoire : {activeApp.structureRecherche?.nom || 'LISER'}
+                  </div>
+                  <p className="text-slate-500 leading-relaxed">
+                    Sujet approuvé par le directeur de thèse. Votre validation de rattachement au laboratoire est requise.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleValidateLabo}
+                    className="flex-1 py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-xs"
+                  >
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>Valider le rattachement</span>
+                  </button>
 
                   <button
-                    type="submit"
-                    className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer transition-all shadow-sm"
+                    type="button"
+                    onClick={() => setIsRefusing(true)}
+                    className="py-2.5 px-4 bg-white hover:bg-rose-50 text-rose-700 hover:text-rose-800 border border-rose-200 font-semibold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-colors"
                   >
-                    Enregistrer la Délibération
+                    <XCircle className="w-4 h-4 text-rose-500" />
+                    <span>Refuser</span>
                   </button>
-                </form>
+                </div>
+
+                {isRefusing && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2 animate-in fade-in duration-150">
+                    <label className="block text-xs text-slate-700 font-semibold">
+                      Motif du refus de rattachement :
+                    </label>
+                    <input
+                      type="text"
+                      value={refusalReason}
+                      onChange={(e) => setRefusalReason(e.target.value)}
+                      placeholder="Indiquez le motif..."
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900"
+                    />
+                    <div className="flex items-center gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsRefusing(false)}
+                        className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRejectLabo}
+                        className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-lg cursor-pointer transition-colors"
+                      >
+                        Confirmer le refus
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ACTOR: DIRECTEUR CEDOC -> Final Registration */}
+            {isCedoc && (
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+                  <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-slate-700" />
+                    Inscription définitive au CEDoc Sciences & Technologies
+                  </div>
+                  <p className="text-slate-500 leading-relaxed">
+                    Toutes les approbations préalables (conformité, encadrant, laboratoire) ont été recueillies.
+                  </p>
+                </div>
+
+                {['INSCRIT_DEFINITIF', 'INSCRIPTION_DEFINITIVE', 'INSCRITE'].includes(
+                  activeApp.currentStatut
+                ) ? (
+                  <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Inscription définitive validée (INSCRIT_DEFINITIF)</span>
+                    </div>
+                    {activeApp.officialAttestationNumber && (
+                      <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-white border border-emerald-200 text-emerald-800">
+                        {activeApp.officialAttestationNumber}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleValidateFinalCedoc}
+                    className="w-full py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-xs"
+                  >
+                    <Award className="w-4 h-4 text-emerald-200" />
+                    <span>Valider l'inscription définitive &amp; Générer l'attestation</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* ACTOR: AGENT PÉDAGOGIQUE -> Document Compliance Control */}
+            {isAgent && (
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-900">Pièces justificatives du dossier</span>
+                  <span className="text-slate-500">
+                    {activeApp.documents.filter((d) => d.conformite === 'CONFORME').length} / {activeApp.documents.length} conformes
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {activeApp.documents.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs"
+                    >
+                      <div>
+                        <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                          <span>{doc.title}</span>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
+                              doc.conformite === 'CONFORME'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {doc.conformite}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                          {doc.storagePath}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleVerifyDocument(doc.id, 'CONFORME')}
+                          className="py-1 px-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Conforme</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleVerifyDocument(doc.id, 'COMPLEMENT_DEMANDE', rejectionReason)}
+                          className="py-1 px-2.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          <span>À compléter</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
+        </div>
+      )}
 
-          {/* Right Column: Integrated Exchange Log (Zero USB / Zero Email) */}
-          <div className="lg:col-span-5 space-y-6">
-            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                  <Send className="w-4 h-4 text-emerald-600" />
-                  Espace d'Échange & Carnet de Thèse
+      {/* MODAL: Grille d'Évaluation & Délibération du Jury d'Entretien (Masquée par défaut) */}
+      {showInterviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 border border-slate-200 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto text-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">
+                  Grille d'Évaluation & Délibération du Jury
                 </h3>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {exchangeMessages.length} entrées
-                </span>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Candidat : {activeApp?.candidateName}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowInterviewModal(false)}
+                className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-800 hover:bg-slate-100 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveInterviewScores} className="space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">
+                    Spécialité (/20) :
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    step="0.5"
+                    value={specialite}
+                    onChange={(e) => setSpecialite(Number(e.target.value))}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">
+                    Motivation (/20) :
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    step="0.5"
+                    value={motivation}
+                    onChange={(e) => setMotivation(Number(e.target.value))}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">
+                    Projet de recherche (/20) :
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    step="0.5"
+                    value={projet}
+                    onChange={(e) => setProjet(Number(e.target.value))}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">
+                    Langues & Com. (/20) :
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    step="0.5"
+                    value={langues}
+                    onChange={(e) => setLangues(Number(e.target.value))}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900"
+                  />
+                </div>
               </div>
 
-              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-                {exchangeMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`p-3.5 rounded-2xl text-xs space-y-1.5 ${
-                      msg.senderRole === 'Candidat'
-                        ? 'bg-slate-50 border border-slate-200 ml-4'
-                        : 'bg-emerald-50/50 border border-emerald-100 mr-4'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-bold text-slate-900">{msg.senderName}</span>
-                      <span className="text-slate-400 font-mono">
-                        {new Date(msg.sentAt).toLocaleDateString('fr-FR')}
-                      </span>
-                    </div>
-                    <p className="text-slate-700 leading-relaxed">{msg.message}</p>
-                    {msg.attachmentName && (
-                      <div className="p-2 rounded-xl bg-white border border-slate-200 flex items-center justify-between text-[11px] font-mono">
-                        <span className="truncate max-w-[180px]">{msg.attachmentName}</span>
-                        <span className="text-slate-400">{msg.attachmentSize}</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* Message composer */}
-              <form onSubmit={handlePostSupervisorFeedback} className="space-y-2 pt-2 border-t border-slate-100">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Remarques du jury :
+                </label>
                 <textarea
                   rows={2}
-                  placeholder="Rédiger une consigne, remarque méthodologique..."
-                  value={feedbackMsg}
-                  onChange={(e) => setFeedbackMsg(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-400"
+                  value={juryNotes}
+                  onChange={(e) => setJuryNotes(e.target.value)}
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs"
                 />
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="Pièce jointe (ex: Recommandations.pdf)"
-                    value={feedbackDoc}
-                    onChange={(e) => setFeedbackDoc(e.target.value)}
-                    className="flex-1 p-2 rounded-xl border border-slate-200 text-xs font-mono"
-                  />
-                  <button
-                    type="submit"
-                    className="py-2 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer transition-all"
-                  >
-                    Envoyer
-                  </button>
-                </div>
-              </form>
-            </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Décision officielle :
+                </label>
+                <select
+                  value={decision}
+                  onChange={(e) => setDecision(e.target.value)}
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs"
+                >
+                  <option value="Admitted_Principal">Admis sur Liste Principale</option>
+                  <option value="Admitted_Waiting">Admis sur Liste d'Attente</option>
+                  <option value="Rejected">Non Admis / Refusé</option>
+                </select>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowInterviewModal(false)}
+                  className="px-3.5 py-2 text-slate-600 hover:text-slate-900 text-xs cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl cursor-pointer transition-colors"
+                >
+                  Enregistrer la délibération
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
+      {/* MODAL: Aperçu du dossier & spécimens des pièces + Avis direct */}
+      <DossierPreviewModal
+        isOpen={showPreviewModal}
+        onClose={() => setShowPreviewModal(false)}
+        application={activeApp || null}
+        subject={assignedSubject}
+        mode={isLabHead ? 'lab' : 'supervisor'}
+        onApproveGlobal={isLabHead ? handleValidateLabo : handleApproveSubject}
+        onSubmitSupervisorAvis={!isLabHead ? handleSubmitDirectAvis : undefined}
+        onRejectGlobal={
+          isLabHead
+            ? async (reason) => {
+                if (!activeApp) return;
+                const res = await fetch(`/api/candidatures/${activeApp.id}/refuser-rattachement`, {
+                  method: 'POST',
+                  headers: authHeaders,
+                  body: JSON.stringify({ reason }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                  if (data.application) {
+                    await savePersistedApplication(data.application);
+                  }
+                  showActionNotice(`Rattachement refusé. Notification e-mail envoyée à ${activeApp.candidateName}.`);
+                  advanceToNextCandidate(activeApp.id);
+                  if (onRefreshApplications) onRefreshApplications();
+                }
+              }
+            : undefined
+        }
+        onSaveInterview={async (appId, scores) => {
+          await onScoreInterview(appId, scores);
+          showActionNotice('Délibération enregistrée et résultat notifié par e-mail.');
+          if (onRefreshApplications) onRefreshApplications();
+        }}
+      />
     </div>
   );
 };
